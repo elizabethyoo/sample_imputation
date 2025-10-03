@@ -4,7 +4,7 @@
     <img src="https://img.shields.io/badge/CCDS-Project%20template-328F97?logo=cookiecutter" />
 </a>
 
-tdetermine missingness paterns in sample beiwe data, and try imputation methods
+determine missingness paterns in sample beiwe data, and try imputation methods
 
 ## Project Organization
 
@@ -13,11 +13,11 @@ tdetermine missingness paterns in sample beiwe data, and try imputation methods
 ├── Makefile           <- Makefile with convenience commands like `make data` or `make train`
 ├── README.md          <- The top-level README for developers using this project.
 ├── data
-│   ├── external       <- Data from third party sources.
+│   ├── external       <- Metadata from Beiwe Service Platform, etc.
 │   ├── interim        <- Intermediate data that has been transformed.
 │   ├── processed      <- The final, canonical data sets for modeling.
 │   └── raw            <- The original, immutable data dump.
-│
+│       ├──  
 ├── docs               <- A default mkdocs project; see www.mkdocs.org for details
 │
 ├── models             <- Trained and serialized models, model predictions, or model summaries
