@@ -22,20 +22,17 @@ determine missingness paterns in sample beiwe data, and try imputation methods
 │
 ├── models             <- Trained and serialized models, model predictions, or model summaries
 │
-├── notebooks          <- Jupyter notebooks. Naming convention is a number (for ordering),
-│                         the creator's initials, and a short `-` delimited description, e.g.
-│                         `1.0-jqp-initial-data-exploration`.
-│
-├── pyproject.toml     <- Project configuration file with package metadata for 
-│                         sample_imputation and configuration for tools like black
+├── notebooks          <- Jupyter notebooks
+│   ├── 00_plot_hr_acc_data.ipynb
+│   └── 01_summarize_hr_acc.ipynb        
+├── pyproject.toml     <- Project configuration file 
 │
 ├── references         <- Data dictionaries, manuals, and all other explanatory materials.
 │
 ├── reports            <- Generated analysis as HTML, PDF, LaTeX, etc.
 │   └── figures        <- Generated graphics and figures to be used in reporting
 │
-├── requirements.txt   <- The requirements file for reproducing the analysis environment, e.g.
-│                         generated with `pip freeze > requirements.txt`
+├── requirements.txt   <- The requirements file for reproducing the analysis environment
 │
 ├── setup.cfg          <- Configuration file for flake8
 │
