@@ -6,6 +6,17 @@ import os
 # Helper functions used to read files, compute summaries,
 # concatenate summaries, and plot 
 
+def get_color(std):
+    """Determine color based on standard deviation threshold."""
+    if std < 0.01:
+        return 'green'  # Very still
+    elif std < 0.1:
+        return 'yellow'  # Light movement
+    elif std < 0.3:
+        return 'orange'  # Moderate movement
+    else:
+        return 'red'    # High movement
+
 
 def summarize_hourly_file(file_path, verbose=True):
     """Analyze a single hourly accelerometer CSV file."""
@@ -15,17 +26,37 @@ def summarize_hourly_file(file_path, verbose=True):
             if verbose:
                 print(f"Missing: {os.path.basename(file_path)}")
             return None
+            
         # If it exists read CSV
-        df = pd.read_csv(file_path)
-
+        try:
+            df = pd.read_csv(file_path)
+        except pd.errors.EmptyDataError:
+            if verbose:
+                print(f"Empty CSV file: {os.path.basename(file_path)}")
+            return None
+        except pd.errors.ParserError as e:
+            if verbose:
+                print(f"CSV parsing error in {os.path.basename(file_path)}: {e}")
+            return None
+            
         # Handle empty files
         if len(df) == 0:
             if verbose:
                 print(f"Empty: {os.path.basename(file_path)}")
             return None
+            
+        # Validate required columns
+        required_cols = ['timestamp', 'x', 'y', 'z']
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        if missing_cols:
+            if verbose:
+                print(f"Missing columns in {os.path.basename(file_path)}: {missing_cols}")
+            return None
 
     except Exception as e:
-        print(f"An unexpected error occurred: {e}")
+        if verbose:
+            print(f"An unexpected error occurred with {os.path.basename(file_path)}: {str(e)}")
+        return None
 
     # Convert timestamps
     df['datetime_utc'] = pd.to_datetime(df['timestamp'], unit='ms', utc=True)
@@ -172,7 +203,31 @@ def plot_data_availability(summary_df, time_unit='hour', figsize=(15, 4)):
         'hour', 'day', or 'week'
     figsize : tuple
         Figure size
+        
+    Returns:
+    --------
+    tuple
+        (figure, axis) matplotlib objects
+        
+    Raises:
+    -------
+    ValueError
+        If time_unit is invalid or required columns are missing
     """
+    # Validate input parameters
+    valid_time_units = ['hour', 'day', 'week']
+    if time_unit not in valid_time_units:
+        raise ValueError(f"time_unit must be one of {valid_time_units}")
+        
+    # Check if DataFrame is empty
+    if summary_df is None or summary_df.empty:
+        raise ValueError("Input DataFrame is empty")
+        
+    # Validate required columns
+    required_cols = ['datetime_utc', 'duration_min', 'sampling_min', 'subject_id']
+    missing_cols = [col for col in required_cols if col not in summary_df.columns]
+    if missing_cols:
+        raise ValueError(f"Missing required columns: {missing_cols}")
     
     fig, ax = plt.subplots(figsize=figsize)
     
@@ -252,7 +307,7 @@ def plot_sampling_time(summary_df, time_unit='hour', figsize=(15, 4)):
                            for dt in daily_summary['datetime_utc']]
         
         ax.bar(days_since_start, daily_summary['sampling_min'] / 60,  # Convert to hours
-               color='coral', alapha=0.7, edgecolor='black', width=0.8)
+               color='coral', alpha=0.7, edgecolor='black', width=0.8)
         ax.axhline(y=12, color='red', linestyle='--', linewidth=1, alpha=0.5,
                   label='Expected (50% duty cycle)')
         ax.set_xlabel('Days Since Start', fontsize=11)
@@ -347,7 +402,7 @@ def plot_mean_magnitude(summary_df, time_unit='hour', figsize=(15, 4)):
 
 def plot_daily_summary(summary_df, time_unit='hour', figsize=(15, 10)):
     """
-    Create all 3 plots together.
+    Create all 3 plots together in a single figure.
     
     Parameters:
     -----------
@@ -355,25 +410,70 @@ def plot_daily_summary(summary_df, time_unit='hour', figsize=(15, 10)):
         Output from summarize_period()
     time_unit : str
         'hour', 'day', or 'week'
+    figsize : tuple
+        Figure size
+        
+    Returns:
+    --------
+    tuple
+        (figure, list of axes) matplotlib objects
     """
+    # Input validation
+    valid_time_units = ['hour', 'day', 'week']
+    if time_unit not in valid_time_units:
+        raise ValueError(f"time_unit must be one of {valid_time_units}")
     
-    fig, axes = plt.subplots(3, 1, figsize=figsize)
+    if summary_df is None or summary_df.empty:
+        raise ValueError("Input DataFrame is empty")
     
-    # Plot 1: Data Availability
-    plot_data_availability(summary_df, time_unit=time_unit, figsize=figsize)
-    plt.close()  # Close individual plot
+    # Create figure with 3 subplots
+    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=figsize)
+    
+    # Adjust spacing between subplots
+    plt.subplots_adjust(hspace=0.4)
+    
+    # Plot 1: Data Availability (reuse plotting logic)
+    if time_unit == 'hour':
+        for _, row in summary_df.iterrows():
+            time_diff = row['datetime_utc'] - summary_df['datetime_utc'].min()
+            hours_since_start = time_diff.total_seconds() / 3600
+            duration_hours = row['duration_min'] / 60
+            ax1.fill_between([hours_since_start, hours_since_start + duration_hours],
+                           0, 1, alpha=0.7, color='steelblue',
+                           edgecolor='black', linewidth=0.3)
+        ax1.set_xlabel('Hours Since Start')
+        ax1.set_ylabel('Data Present')
     
     # Plot 2: Sampling Time
-    plot_sampling_time(summary_df, time_unit=time_unit, figsize=figsize)
-    plt.close()
+    hours_since_start = [(dt - summary_df['datetime_utc'].min()).total_seconds() / 3600 
+                        for dt in summary_df['datetime_utc']]
+    ax2.bar(hours_since_start, summary_df['sampling_min'],
+            color='coral', alpha=0.7, edgecolor='black', width=0.8)
+    ax2.axhline(y=30, color='red', linestyle='--', alpha=0.5,
+                label='Expected (50% duty cycle)')
+    ax2.set_xlabel('Hours Since Start')
+    ax2.set_ylabel('Sampling Time (min)')
+    ax2.legend()
     
     # Plot 3: Mean Magnitude
-    plot_mean_magnitude(summary_df, time_unit=time_unit, figsize=figsize)
-    plt.close()
+    colors = [get_color(std) for std in summary_df['std_magnitude']]
+    ax3.scatter(hours_since_start, summary_df['mean_magnitude'],
+                s=50, c=colors, alpha=0.8, edgecolor='black', linewidth=0.5)
+    ax3.axhline(y=1.0, color='blue', linestyle='--', alpha=0.5,
+                label='1g baseline')
+    ax3.set_xlabel('Hours Since Start')
+    ax3.set_ylabel('Mean Magnitude (g)')
+    ax3.legend()
     
-    # Recreate all in one figure (you'll refine this)
-    # For now, just show message
-    print("Use individual plot functions or combine manually")
+    # Set titles
+    ax1.set_title('Data Availability Timeline')
+    ax2.set_title('Sampling Time')
+    ax3.set_title('Mean Accelerometer Magnitude')
     
-    return None
+    # Add grid to all plots
+    for ax in [ax1, ax2, ax3]:
+        ax.grid(alpha=0.3)
+    
+    plt.tight_layout()
+    return fig, [ax1, ax2, ax3]
 
