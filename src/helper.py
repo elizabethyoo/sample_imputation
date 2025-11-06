@@ -123,7 +123,9 @@ def summarize_hourly_file(file_path, verbose=True):
     gaps_count = gaps.sum()
     n_bursts = gaps_count + 1
 
-    # Mean magnitude
+    # Minutely mean magnitude
+    
+    # Hourly mean magnitude
     mean_magnitude = df['magnitude'].mean()
 
     return {
@@ -265,6 +267,241 @@ def summarize_period(subject_id, start_date, end_date, base_path, timezone: Opti
     return summary_df
 
 
+def summarize_hourly_file_minutely(file_path, verbose=True):
+    """
+    Analyze a single hourly accelerometer CSV file and return minutely summaries.
+    
+    Parameters:
+    -----------
+    file_path : str
+        Path to hourly CSV file
+    verbose : bool
+        Whether to print error messages
+        
+    Returns:
+    --------
+    pd.DataFrame or None
+        DataFrame with one row per minute, or None if file cannot be processed.
+        Columns: datetime_utc, minute, n_rows, duration_sec, sampling_min,
+        duty_cycle, n_bursts, mean_magnitude, std_magnitude
+    """
+    try:
+        # Check if file exists
+        if not os.path.exists(file_path):
+            if verbose:
+                print(f"Missing: {os.path.basename(file_path)}")
+            return None
+            
+        # If it exists read CSV
+        try:
+            df = pd.read_csv(file_path)
+        except pd.errors.EmptyDataError:
+            if verbose:
+                print(f"Empty CSV file: {os.path.basename(file_path)}")
+            return None
+        except pd.errors.ParserError as e:
+            if verbose:
+                print(f"CSV parsing error in {os.path.basename(file_path)}: {e}")
+            return None
+            
+        # Handle empty files
+        if len(df) == 0:
+            if verbose:
+                print(f"Empty: {os.path.basename(file_path)}")
+            return None
+            
+        # Validate required columns
+        required_cols = ['timestamp', 'x', 'y', 'z']
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        if missing_cols:
+            if verbose:
+                print(f"Missing columns in {os.path.basename(file_path)}: {missing_cols}")
+            return None
+
+    except Exception as e:
+        if verbose:
+            print(f"An unexpected error occurred with {os.path.basename(file_path)}: {str(e)}")
+        return None
+
+    # Convert timestamps
+    df['datetime_utc'] = pd.to_datetime(df['timestamp'], unit='ms', utc=True)
+    
+    # Compute magnitude
+    df['magnitude'] = np.sqrt(df['x']**2 + df['y']**2 + df['z']**2) - 1.0  # subtract 1.0 to account for gravity
+    
+    # Group by minute (round down to nearest minute)
+    df['datetime_minute'] = df['datetime_utc'].dt.floor('min')
+    
+    # Calculate metrics for each minute
+    minute_summaries = []
+    
+    for minute_dt, minute_df in df.groupby('datetime_minute'):
+        n_rows = len(minute_df)
+        start_time = minute_df['datetime_utc'].iloc[0]
+        end_time = minute_df['datetime_utc'].iloc[-1]
+        
+        # Duration in seconds
+        duration_sec = (end_time - start_time).total_seconds()
+        duration_min = duration_sec / 60
+        
+        # Sampling time in minutes (at 10 Hz)
+        sampling_min = n_rows / 10 / 60
+        
+        # Duty cycle
+        if duration_min > 0:
+            duty_cycle = sampling_min / duration_min
+        else:
+            duty_cycle = 0.0
+        
+        # Count bursts (gaps > 1 second)
+        minute_df['time_diff_ms'] = minute_df['timestamp'].diff()
+        gaps = minute_df['time_diff_ms'] > 1000
+        gaps_count = gaps.sum()
+        n_bursts = gaps_count + 1
+        
+        # Magnitude statistics
+        mean_magnitude = minute_df['magnitude'].mean()
+        std_magnitude = minute_df['magnitude'].std()
+        
+        # Minute within hour (0-59)
+        minute = minute_dt.minute
+        
+        minute_summaries.append({
+            'datetime_utc': minute_dt,
+            'minute': minute,
+            'n_rows': n_rows,
+            'duration_sec': duration_sec,
+            'duration_min': duration_min,
+            'sampling_min': sampling_min,
+            'duty_cycle': duty_cycle,
+            'n_bursts': n_bursts,
+            'mean_magnitude': mean_magnitude,
+            'std_magnitude': std_magnitude
+        })
+    
+    if not minute_summaries:
+        return None
+    
+    return pd.DataFrame(minute_summaries)
+
+
+def summarize_period_minutely(subject_id, start_date, end_date, base_path, timezone: Optional[str] = None):
+    """
+    Summarize accelerometer data for a subject across a date range at minutely resolution.
+    
+    Parameters:
+    -----------
+    subject_id : str
+        Subject identifier (e.g., '3si9xdvl')
+    start_date : str or datetime
+        Start date in 'YYYY-MM-DD' format
+    end_date : str or datetime
+        End date in 'YYYY-MM-DD' format (inclusive)
+    base_path : str
+        Base directory path (e.g., 'sample_imputation/data/raw/')
+    timezone : Optional[str]
+        Desired local timezone for output column 'local_time'. Accepts IANA names
+        (e.g., 'America/New_York') or simple aliases (e.g., 'us_east'). If None,
+        'local_time' equals 'datetime_utc'.
+    
+    Returns:
+    --------
+    pd.DataFrame
+        Summary with columns: subject_id, date, hour, minute, datetime_utc,
+        n_rows, duration_min, sampling_min, duty_cycle, n_bursts,
+        mean_magnitude, std_magnitude, local_time, day_of_wk, weekend
+    """
+    
+    # Convert to datetime if strings
+    if isinstance(start_date, str):
+        start_date = pd.to_datetime(start_date)
+    if isinstance(end_date, str):
+        end_date = pd.to_datetime(end_date)
+
+    # Generate date range
+    date_range = pd.date_range(start=start_date, end=end_date, freq='D')
+
+    # Storage for results
+    all_summaries = []
+
+    # Path to accelerometer files
+    accel_path = os.path.join(base_path, subject_id, 'accelerometer')
+
+    print(f"Summarizing minutely data for {subject_id} from "
+          f"{start_date.date()} to {end_date.date()}...")
+    print("=" * 70)
+
+    # Loop through each date
+    for date in date_range:
+        date_str = date.strftime('%Y-%m-%d')
+        print(f"\n{date_str}:")
+
+        # Loop through 24 hours
+        for hour in range(24):
+            file_name = f"{date_str} {hour:02d}_00_00+00_00.csv"
+            file_path = os.path.join(accel_path, file_name)
+
+            minute_df = summarize_hourly_file_minutely(file_path, verbose=False)
+
+            if minute_df is not None and len(minute_df) > 0:
+                # Add metadata
+                minute_df['subject_id'] = subject_id
+                minute_df['date'] = date_str
+                minute_df['hour'] = hour
+                
+                all_summaries.append(minute_df)
+                print(f"OK: Hour {hour:02d}: {len(minute_df)} minutes, {minute_df['n_rows'].sum():,} total rows")
+            else:
+                print(f"MISSING: Hour {hour:02d}: missing")
+    
+    print("\n" + "=" * 70)
+    
+    if not all_summaries:
+        print("No data found")
+        return pd.DataFrame()
+    
+    # Concatenate all minute summaries
+    summary_df = pd.concat(all_summaries, ignore_index=True)
+
+    # Sort by datetime
+    summary_df = summary_df.sort_values('datetime_utc').reset_index(drop=True)
+
+    # Add local_time column based on timezone argument
+    resolved_tz = _resolve_timezone_string(timezone)
+    if resolved_tz is None or resolved_tz == 'UTC':
+        summary_df['local_time'] = summary_df['datetime_utc']
+    else:
+        if _HAS_ZONEINFO and ZoneInfo is not None:
+            tzinfo = ZoneInfo(resolved_tz)
+            summary_df['local_time'] = summary_df['datetime_utc'].dt.tz_convert(tzinfo)
+        else:
+            if 'pytz' in globals() and pytz is not None:
+                tzinfo = pytz.timezone(resolved_tz)
+                summary_df['local_time'] = summary_df['datetime_utc'].dt.tz_convert(tzinfo)
+            else:
+                # Fallback: if no timezone library available, default to UTC
+                summary_df['local_time'] = summary_df['datetime_utc']
+
+    # Derive day_of_wk (mon..sun) and weekend (bool) based on local_time
+    weekday_num = summary_df['local_time'].dt.weekday  # Monday=0, Sunday=6
+    dow_map = {0: 'mon', 1: 'tue', 2: 'wed', 3: 'thu', 4: 'fri', 5: 'sat', 6: 'sun'}
+    summary_df['day_of_wk'] = weekday_num.map(dow_map)
+    summary_df['weekend'] = weekday_num.isin([5, 6])
+
+    # Get mode of all duty_cycle values, round to whole number
+    duty_cycle_mode = summary_df['duty_cycle'].round(2).mode()[0]
+    print(f"Duty cycle mode: {duty_cycle_mode}")
+    summary_df['duty_cycle_mode'] = duty_cycle_mode
+    # Compute proportion of each observed duty cycle to mode, rounded to 2 decimal places
+    duty_cycle_prop = (summary_df['duty_cycle'] / duty_cycle_mode).round(2)
+    duty_cycle_prop = np.minimum(duty_cycle_prop, 1.0) 
+    summary_df['duty_cycle_prop'] = duty_cycle_prop
+
+    print(f"Processed {len(summary_df)} minutes across {len(date_range)} days")
+    
+    return summary_df
+
+
 def plot_data_availability(summary_df, time_unit='hour', figsize=(15, 4)):
     """
     Plot data availability timeline.
@@ -357,7 +594,7 @@ def plot_data_availability(summary_df, time_unit='hour', figsize=(15, 4)):
             idx = (summary_df['local_time'] - ref_time).abs().idxmin()
             lt = summary_df.loc[idx, 'local_time']
             dow = summary_df.loc[idx, 'day_of_wk']
-            tick_labels.append(f"{lt.strftime('%m-%d %H:%M')} ({dow})")
+            tick_labels.append(f"{lt.strftime('%Y-%m-%d %H:%M')} ({dow})")
 
         ax.set_xlabel('Local Time', fontsize=11)
         ax.set_xticks(tick_positions)
@@ -383,7 +620,7 @@ def plot_data_availability(summary_df, time_unit='hour', figsize=(15, 4)):
         ax.bar(days_since_start, daily_summary['coverage_pct'], 
                color='steelblue', alpha=0.7, edgecolor='black', width=0.8)
         # Tick labels as local date + day_of_wk
-        ax.set_xlabel('Local Date (with day of week)', fontsize=11)
+        ax.set_xlabel('Local Date', fontsize=11)
         print(days_since_start)
         ax.set_xticks(days_since_start)
         ax.set_xticklabels([f"{lt.strftime('%m-%d')} ({dow})" for lt, dow in zip(daily_summary['local_time'], daily_summary['day_of_wk'])],
@@ -443,21 +680,22 @@ def plot_sampling_time(summary_df, time_unit='hour', figsize=(15, 4)):
                color='coral', alpha=0.7, edgecolor='black', linewidth=0.5, width=0.8)
         ax.set_xlim(-0.5, 23.5)
         
-        # Build x-axis labels with local_time and day_of_wk
+        # Build x-axis labels with local_time (including date) and day_of_wk
         # For each hour, find a representative local_time and day_of_wk
         tick_labels = []
         for hour in all_hours:
             # Find rows with this hour
             hour_rows = summary_df[summary_df['local_hour'] == hour]
             if len(hour_rows) > 0:
-                # Use first occurrence for label
-                lt = hour_rows['local_time'].iloc[0]
-                dow = hour_rows['day_of_wk'].iloc[0]
-                tick_labels.append(f"{lt.strftime('%H:%M')} ({dow})")
+                # Use most recent occurrence for label (or first if all same date)
+                lt = hour_rows['local_time'].max()
+                # Get day_of_wk for this specific time
+                dow = hour_rows[hour_rows['local_time'] == lt]['day_of_wk'].iloc[0]
+                tick_labels.append(f"{lt.strftime('%Y-%m-%d %H:%M')} ({dow})")
             else:
                 tick_labels.append(f"{hour:02d}:00")
         
-        ax.set_xlabel('Local Time (with day of week)', fontsize=11)
+        ax.set_xlabel('Local Time', fontsize=11)
         ax.set_ylabel('Sampling Time (min)', fontsize=11)
         ax.set_xticks(all_hours)
         ax.set_xticklabels(tick_labels, rotation=45, ha='right')
@@ -489,7 +727,7 @@ def plot_sampling_time(summary_df, time_unit='hour', figsize=(15, 4)):
                   linewidth=1, alpha=0.5, label=f'Expected ({expected_minutes_per_day} min/day)')
         
         # X-axis labels
-        ax.set_xlabel('Local Date (with day of week)', fontsize=11)
+        ax.set_xlabel('Local Time', fontsize=11)
         ax.set_xticks(days_since_start)
         ax.set_xticklabels([f"{lt.strftime('%m-%d')} ({dow})" for lt, dow in zip(daily_summary['local_time'], daily_summary['day_of_wk'])],
                            rotation=45, ha='right')
@@ -585,7 +823,7 @@ def plot_mean_magnitude(summary_df, time_unit='hour', figsize=(15, 4)):
             idx = (summary_df['local_time'] - ref_time).abs().idxmin()
             lt = summary_df.loc[idx, 'local_time']
             dow = summary_df.loc[idx, 'day_of_wk']
-            tick_labels.append(f"{lt.strftime('%m-%d %H:%M')} ({dow})")
+            tick_labels.append(f"{lt.strftime('%Y-%m-%d %H:%M')} ({dow})")
         ax.set_xlabel('Local Time', fontsize=11)
         ax.set_xticks(tick_positions)
         ax.set_xticklabels(tick_labels, rotation=45, ha='right')
@@ -610,7 +848,7 @@ def plot_mean_magnitude(summary_df, time_unit='hour', figsize=(15, 4)):
         ax.scatter(days_since_start, daily_summary['mean_magnitude'], 
                   s=100, c=colors, alpha=0.8, edgecolor='black', linewidth=1, zorder=3)
         
-        ax.set_xlabel('Local Date (with day of week)', fontsize=11)
+        ax.set_xlabel('Local Date', fontsize=11)
         ax.set_xticks(days_since_start)
         ax.set_xticklabels([f"{lt.strftime('%m-%d')} ({dow})" for lt, dow in zip(daily_summary['local_time'], daily_summary['day_of_wk'])])
     
@@ -692,18 +930,18 @@ def plot_daily_summary(summary_df, time_unit='hour', figsize=(15, 10)):
                 color='coral', alpha=0.7, edgecolor='black', linewidth=0.5, width=0.8)
         ax2.set_xlim(-0.5, 23.5)
         
-        # Build x-axis labels
+        # Build x-axis labels (include date)
         tick_labels = []
         for hour in all_hours:
             hour_rows = summary_df_copy[summary_df_copy['local_hour'] == hour]
             if len(hour_rows) > 0:
                 lt = hour_rows['local_time'].iloc[0]
                 dow = hour_rows['day_of_wk'].iloc[0]
-                tick_labels.append(f"{lt.strftime('%H:%M')} ({dow})")
+                tick_labels.append(f"{lt.strftime('%Y-%m-%d %H:%M')} ({dow})")
             else:
                 tick_labels.append(f"{hour:02d}:00")
         
-        ax2.set_xlabel('Local Time (with day of week)')
+        ax2.set_xlabel('Local Time')
         ax2.set_xticks(all_hours)
         ax2.set_xticklabels(tick_labels, rotation=45, ha='right')
         ax2.set_ylabel('Sampling Time (min)')
@@ -718,9 +956,9 @@ def plot_daily_summary(summary_df, time_unit='hour', figsize=(15, 10)):
         summary_df_copy['local_hour'] = summary_df_copy['local_time'].dt.hour
         ax3.scatter(summary_df_copy['local_hour'], summary_df['mean_magnitude'],
                     s=50, c=colors, alpha=0.8, edgecolor='black', linewidth=0.5)
-        ax3.axhline(y=0.0, color='blue', linestyle='--', alpha=0.5,
-                    label='0g baseline')
-        ax3.set_xlabel('Local Time (with day of week)')
+        # ax3.axhline(y=0.0, color='blue', linestyle='--', alpha=0.5,
+        #             label='0g baseline')
+        ax3.set_xlabel('Local Time')
         ax3.set_xlim(-0.5, 23.5)
         ax3.set_xticks(all_hours)
         ax3.set_xticklabels(tick_labels, rotation=45, ha='right')
