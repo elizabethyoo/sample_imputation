@@ -6,6 +6,31 @@
 
 determine missingness paterns in sample beiwe data, and try imputation methods
 
+## MIMS Processing
+
+This repository now includes a Python port of the Monitor Independent Movement Summary (MIMS) algorithm proposed by Zhang et&nbsp;al. in the context of raw accelerometer processing [[Zhang et&nbsp;al., 2012]](https://doi.org/10.1123/jmpb.2018-0068). The implementation mirrors the reference R package (mHealthGroup/MIMSunit) and lives under `src/mims/mims_unit.py`.
+
+```python
+import pandas as pd
+from mims import mims_unit
+
+df = pd.read_csv("my_accelerometer.csv", parse_dates=["timestamp"])
+summary = mims_unit(
+    df,
+    epoch="1 sec",
+    dynamic_range=(-8.0, 8.0),
+    output_mims_per_axis=True,
+)
+```
+
+Guard rails:
+
+- The first column must be a monotonic timestamp without duplicates. Remaining columns must be acceleration axes in `g`.
+- The `dynamic_range` tuple should match the sensor range; values outside the range are clipped before integration.
+- Set `use_filtering=False` to skip the 0.2–5 Hz Butterworth band-pass cascade during experimentation.
+
+See the module docstring in `src/mims/mims_unit.py` for additional configuration parameters and implementation notes.
+
 ## Project Organization
 
 ```
