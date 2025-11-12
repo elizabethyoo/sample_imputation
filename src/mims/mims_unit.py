@@ -306,7 +306,7 @@ def _floor_to_epoch(ts: pd.Timestamp, epoch: str) -> pd.Timestamp:
     if "sec" in epoch_lower:
         return ts.floor("s")
     if "min" in epoch_lower:
-        return ts.floor("T")
+        return ts.floor("min")
     if "hour" in epoch_lower:
         return ts.floor("H")
     if "day" in epoch_lower:
