@@ -28,6 +28,7 @@ dependencies = [
     "ruff",
     "scikit-learn",
     "scipy",
+    "ssqueezepy>=0.6.0",
     "tqdm",
     "typer",
 ]
